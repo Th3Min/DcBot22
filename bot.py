@@ -78,8 +78,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ─────────────────────────────────────────────
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    print(f"✅  {bot.user} ist online! Slash Commands synchronisiert.")
+    for guild in bot.guilds:
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+    print(f"✅  {bot.user} ist online! Slash Commands synchronisiert auf {len(bot.guilds)} Server.")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
