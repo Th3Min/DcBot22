@@ -1,15 +1,35 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import json
 import os
 import math
 import random
 from datetime import datetime
-import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
+# ─────────────────────────────────────────────
+#  CONFIG
+# ─────────────────────────────────────────────
+BOT_TOKEN  = os.environ.get("BOT_TOKEN", "DEIN_TOKEN_HIER")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+GUILD_ID   = 1504924690156748931
+XP_MIN     = 15
+XP_MAX     = 25
+COOLDOWN_S = 60
+
+LEVEL_COLORS = [
+    0x3498db, 0x2ecc71, 0xe67e22, 0xe74c3c,
+    0x9b59b6, 0x1abc9c, 0xf1c40f, 0xe91e63
+]
+
+MY_GUILD = discord.Object(id=GUILD_ID)
+
+# ─────────────────────────────────────────────
+#  KEEP ALIVE
+# ─────────────────────────────────────────────
 class KeepAlive(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,21 +46,48 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # ─────────────────────────────────────────────
-#  CONFIG
+#  DATABASE
 # ─────────────────────────────────────────────
-BOT_TOKEN  = os.environ.get("BOT_TOKEN", "DEIN_TOKEN_HIER")
-GUILD_ID   = 1504924690156748931
-XP_MIN     = 15
-XP_MAX     = 25
-COOLDOWN_S = 60
-DATA_FILE  = "data.json"
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
 
-LEVEL_COLORS = [
-    0x3498db, 0x2ecc71, 0xe67e22, 0xe74c3c,
-    0x9b59b6, 0x1abc9c, 0xf1c40f, 0xe91e63
-]
+def init_db():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    xp INTEGER DEFAULT 0,
+                    messages INTEGER DEFAULT 0,
+                    last_xp TIMESTAMP
+                )
+            """)
+        conn.commit()
 
-MY_GUILD = discord.Object(id=GUILD_ID)
+def get_user(user_id: str) -> dict:
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                cur.execute("INSERT INTO users (user_id, xp, messages, last_xp) VALUES (%s, 0, 0, NULL)", (user_id,))
+                conn.commit()
+                return {"user_id": user_id, "xp": 0, "messages": 0, "last_xp": None}
+            return dict(row)
+
+def update_user(user_id: str, xp: int, messages: int, last_xp):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users SET xp = %s, messages = %s, last_xp = %s WHERE user_id = %s
+            """, (xp, messages, last_xp, user_id))
+        conn.commit()
+
+def get_all_users():
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users ORDER BY xp DESC")
+            return [dict(r) for r in cur.fetchall()]
 
 # ─────────────────────────────────────────────
 #  HELPERS
@@ -67,21 +114,6 @@ def get_level(xp: int) -> int:
         level += 1
     return level
 
-def load_data() -> dict:
-    if not os.path.exists(DATA_FILE):
-        return {}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
-
-def save_data(data: dict):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-def get_user(data: dict, user_id: str) -> dict:
-    if user_id not in data:
-        data[user_id] = {"xp": 0, "messages": 0, "last_xp": None}
-    return data[user_id]
-
 # ─────────────────────────────────────────────
 #  BOT
 # ─────────────────────────────────────────────
@@ -96,12 +128,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ─────────────────────────────────────────────
 @bot.event
 async def on_ready():
+    init_db()
     print(f"Bot eingeloggt als {bot.user}", flush=True)
     try:
         synced = await bot.tree.sync(guild=MY_GUILD)
         print(f"✅ {len(synced)} Slash Commands synchronisiert!", flush=True)
-        for cmd in synced:
-            print(f"  - /{cmd.name}", flush=True)
     except Exception as e:
         print(f"❌ Sync Fehler: {e}", flush=True)
     await bot.change_presence(
@@ -116,24 +147,25 @@ async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
 
-    data = load_data()
     uid  = str(message.author.id)
-    user = get_user(data, uid)
+    user = get_user(uid)
     now  = datetime.utcnow()
 
     if user["last_xp"]:
-        last = datetime.fromisoformat(user["last_xp"])
+        last = user["last_xp"]
+        if isinstance(last, str):
+            last = datetime.fromisoformat(last)
         if (now - last).total_seconds() < COOLDOWN_S:
             await bot.process_commands(message)
             return
 
-    gained_xp        = random.randint(XP_MIN, XP_MAX)
-    old_level         = get_level(user["xp"])
-    user["xp"]       += gained_xp
-    user["messages"] += 1
-    user["last_xp"]   = now.isoformat()
-    new_level         = get_level(user["xp"])
-    save_data(data)
+    gained_xp = random.randint(XP_MIN, XP_MAX)
+    old_level  = get_level(user["xp"])
+    new_xp     = user["xp"] + gained_xp
+    new_msgs   = user["messages"] + 1
+    new_level  = get_level(new_xp)
+
+    update_user(uid, new_xp, new_msgs, now)
 
     if new_level > old_level and get_title(new_level) != get_title(old_level):
         color = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
@@ -148,7 +180,7 @@ async def on_message(message: discord.Message):
             color=color
         )
         embed.set_thumbnail(url=message.author.display_avatar.url)
-        embed.set_footer(text=f"Gesamt-XP: {user['xp']:,}")
+        embed.set_footer(text=f"Gesamt-XP: {new_xp:,}")
         await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
@@ -161,9 +193,8 @@ async def on_message(message: discord.Message):
 async def rang(interaction: discord.Interaction, mitglied: discord.Member = None):
     await interaction.response.defer()
     member = mitglied or interaction.user
-    data   = load_data()
     uid    = str(member.id)
-    user   = get_user(data, uid)
+    user   = get_user(uid)
 
     level      = get_level(user["xp"])
     current_xp = user["xp"] - total_xp_for_level(level)
@@ -173,8 +204,8 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
     filled     = int(bar_len * progress)
     bar        = "█" * filled + "░" * (bar_len - filled)
 
-    sorted_users = sorted(data.items(), key=lambda x: x[1].get("xp", 0), reverse=True)
-    rank_pos     = next((i + 1 for i, (uid2, _) in enumerate(sorted_users) if uid2 == uid), "?")
+    all_users = get_all_users()
+    rank_pos  = next((i + 1 for i, u in enumerate(all_users) if u["user_id"] == uid), "?")
 
     color = LEVEL_COLORS[level % len(LEVEL_COLORS)]
     embed = discord.Embed(color=color)
@@ -196,13 +227,12 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
 @app_commands.describe(seite="Seite der Rangliste (Standard: 1)")
 async def top(interaction: discord.Interaction, seite: int = 1):
     await interaction.response.defer()
-    data         = load_data()
-    sorted_users = sorted(data.items(), key=lambda x: x[1].get("xp", 0), reverse=True)
+    all_users = get_all_users()
 
     per_page = 10
     start    = (seite - 1) * per_page
-    page     = sorted_users[start:start + per_page]
-    total_p  = math.ceil(len(sorted_users) / per_page) or 1
+    page     = all_users[start:start + per_page]
+    total_p  = math.ceil(len(all_users) / per_page) or 1
 
     if not page:
         await interaction.followup.send("Keine Daten auf dieser Seite.", ephemeral=True)
@@ -210,13 +240,13 @@ async def top(interaction: discord.Interaction, seite: int = 1):
 
     medals = ["🥇", "🥈", "🥉"]
     lines  = []
-    for i, (uid, udata) in enumerate(page):
+    for i, udata in enumerate(page):
         pos    = start + i + 1
         icon   = medals[pos - 1] if pos <= 3 else f"`#{pos}`"
-        member = interaction.guild.get_member(int(uid))
-        name   = member.display_name if member else f"User {uid[:6]}"
-        level  = get_level(udata.get("xp", 0))
-        lines.append(f"{icon} **{name}** — {get_title(level)} · Lvl {level} · {udata.get('xp',0):,} XP")
+        member = interaction.guild.get_member(int(udata["user_id"]))
+        name   = member.display_name if member else f"User {udata['user_id'][:6]}"
+        level  = get_level(udata["xp"])
+        lines.append(f"{icon} **{name}** — {get_title(level)} · Lvl {level} · {udata['xp']:,} XP")
 
     embed = discord.Embed(
         title="🏆 XP Rangliste",
