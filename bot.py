@@ -76,12 +76,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ─────────────────────────────────────────────
 #  EVENTS
 # ─────────────────────────────────────────────
+GUILD_ID = discord.Object(id=1504924690156748931)
+
 @bot.event
 async def on_ready():
-    for guild in bot.guilds:
-        bot.tree.copy_global_to(guild=guild)
-        await bot.tree.sync(guild=guild)
-    print(f"✅  {bot.user} ist online! Slash Commands synchronisiert auf {len(bot.guilds)} Server.")
+    bot.tree.copy_global_to(guild=GUILD_ID)
+    synced = await bot.tree.sync(guild=GUILD_ID)
+    print(f"✅  {bot.user} ist online! {len(synced)} Slash Commands auf Server synchronisiert.")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
