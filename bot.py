@@ -18,7 +18,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 GUILD_ID   = 1504924690156748931
 XP_MIN     = 15
 XP_MAX     = 25
-COOLDOWN_S = 60
+COOLDOWN_S = 20
 
 LEVEL_COLORS = [
     0x3498db, 0x2ecc71, 0xe67e22, 0xe74c3c,
@@ -220,7 +220,7 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
         inline=False
     )
     embed.set_footer(text=f"Noch {needed_xp - current_xp:,} XP bis Level {level+1}")
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="top", description="Zeigt die Top-10 Rangliste", guild=MY_GUILD)
@@ -254,7 +254,7 @@ async def top(interaction: discord.Interaction, seite: int = 1):
         color=0xf1c40f
     )
     embed.set_footer(text=f"Seite {seite}/{total_p}  •  /top <seite>")
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="xpinfo", description="Erklärt das XP-System und alle Titel", guild=MY_GUILD)
@@ -277,7 +277,7 @@ async def xpinfo(interaction: discord.Interaction):
             "`/xpinfo` – Diese Info"
         )
     )
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 bot.run(BOT_TOKEN)
