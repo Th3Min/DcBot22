@@ -151,18 +151,24 @@ async def on_message(message: discord.Message):
     user = get_user(uid)
     now  = datetime.utcnow()
 
+    new_msgs = user["messages"] + 1
+    on_cooldown = False
+
     if user["last_xp"]:
         last = user["last_xp"]
         if isinstance(last, str):
             last = datetime.fromisoformat(last)
         if (now - last).total_seconds() < COOLDOWN_S:
-            await bot.process_commands(message)
-            return
+            on_cooldown = True
+
+    if on_cooldown:
+        update_user(uid, user["xp"], new_msgs, user["last_xp"])
+        await bot.process_commands(message)
+        return
 
     gained_xp = random.randint(XP_MIN, XP_MAX)
     old_level  = get_level(user["xp"])
     new_xp     = user["xp"] + gained_xp
-    new_msgs   = user["messages"] + 1
     new_level  = get_level(new_xp)
 
     update_user(uid, new_xp, new_msgs, now)
