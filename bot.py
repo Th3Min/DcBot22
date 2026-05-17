@@ -11,6 +11,7 @@ from datetime import datetime
 #  CONFIG
 # ─────────────────────────────────────────────
 BOT_TOKEN  = os.environ.get("BOT_TOKEN", "DEIN_TOKEN_HIER")
+GUILD_ID   = 1504924690156748931
 XP_MIN     = 15
 XP_MAX     = 25
 COOLDOWN_S = 60
@@ -20,6 +21,8 @@ LEVEL_COLORS = [
     0x3498db, 0x2ecc71, 0xe67e22, 0xe74c3c,
     0x9b59b6, 0x1abc9c, 0xf1c40f, 0xe91e63
 ]
+
+MY_GUILD = discord.Object(id=GUILD_ID)
 
 def get_title(level: int) -> str:
     if level < 10:
@@ -31,9 +34,6 @@ def get_title(level: int) -> str:
     else:
         return "💀 Ultimativer Blindermann Hater"
 
-# ─────────────────────────────────────────────
-#  XP-FORMEL
-# ─────────────────────────────────────────────
 def xp_for_level(level: int) -> int:
     return 5 * (level ** 2) + 50 * level + 100
 
@@ -46,9 +46,6 @@ def get_level(xp: int) -> int:
         level += 1
     return level
 
-# ─────────────────────────────────────────────
-#  JSON-DATEN
-# ─────────────────────────────────────────────
 def load_data() -> dict:
     if not os.path.exists(DATA_FILE):
         return {}
@@ -65,24 +62,28 @@ def get_user(data: dict, user_id: str) -> dict:
     return data[user_id]
 
 # ─────────────────────────────────────────────
-#  BOT-SETUP
+#  BOT
 # ─────────────────────────────────────────────
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
+class MyBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+        super().__init__(command_prefix="!", intents=intents)
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+    async def setup_hook(self):
+        self.tree.copy_global_to(guild=MY_GUILD)
+        synced = await self.tree.sync(guild=MY_GUILD)
+        print(f"✅ {len(synced)} Slash Commands synchronisiert!")
+
+bot = MyBot()
 
 # ─────────────────────────────────────────────
 #  EVENTS
 # ─────────────────────────────────────────────
-GUILD_ID = discord.Object(id=1504924690156748931)
-
 @bot.event
 async def on_ready():
-    bot.tree.copy_global_to(guild=GUILD_ID)
-    synced = await bot.tree.sync(guild=GUILD_ID)
-    print(f"✅  {bot.user} ist online! {len(synced)} Slash Commands auf Server synchronisiert.")
+    print(f"✅ {bot.user} ist online!")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
@@ -114,16 +115,15 @@ async def on_message(message: discord.Message):
     new_level         = get_level(user["xp"])
     save_data(data)
 
-    if new_level > old_level:
-        color  = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
-        needed = xp_for_level(new_level)
-        title  = get_title(new_level)
-        embed  = discord.Embed(
-            title="⚡ LEVEL UP!",
+    if new_level > old_level and get_title(new_level) != get_title(old_level):
+        color = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
+        title = get_title(new_level)
+        embed = discord.Embed(
+            title="🎖️ NEUER TITEL!",
             description=(
-                f"**{message.author.display_name}** hat Level **{new_level}** erreicht! 🎉\n"
-                f"Neuer Titel: **{title}**\n\n"
-                f"Weiter so – das nächste Level braucht noch **{needed} XP**."
+                f"**{message.author.display_name}** hat einen neuen Titel erreicht! 🎉\n\n"
+                f"**{title}**\n\n"
+                f"_(Level {new_level} erreicht)_"
             ),
             color=color
         )
@@ -136,7 +136,7 @@ async def on_message(message: discord.Message):
 # ─────────────────────────────────────────────
 #  SLASH COMMANDS
 # ─────────────────────────────────────────────
-@bot.tree.command(name="rang", description="Zeigt dein Level, Titel und XP an")
+@bot.tree.command(name="rang", description="Zeigt dein Level, Titel und XP an", guild=MY_GUILD)
 @app_commands.describe(mitglied="Anderes Mitglied anzeigen (optional)")
 async def rang(interaction: discord.Interaction, mitglied: discord.Member = None):
     member = mitglied or interaction.user
@@ -158,10 +158,10 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
     color = LEVEL_COLORS[level % len(LEVEL_COLORS)]
     embed = discord.Embed(color=color)
     embed.set_author(name=f"{member.display_name} – Rang #{rank_pos}", icon_url=member.display_avatar.url)
-    embed.add_field(name="🏆 Level",       value=f"**{level}**",              inline=True)
-    embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**",   inline=True)
-    embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",       inline=True)
-    embed.add_field(name="💬 Nachrichten", value=f"**{user['messages']:,}**",  inline=True)
+    embed.add_field(name="🏆 Level",       value=f"**{level}**",             inline=True)
+    embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**",  inline=True)
+    embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",      inline=True)
+    embed.add_field(name="💬 Nachrichten", value=f"**{user['messages']:,}**", inline=True)
     embed.add_field(
         name=f"Fortschritt  {current_xp:,} / {needed_xp:,} XP",
         value=f"`{bar}` {progress*100:.1f}%",
@@ -171,7 +171,7 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="top", description="Zeigt die Top-10 Rangliste")
+@bot.tree.command(name="top", description="Zeigt die Top-10 Rangliste", guild=MY_GUILD)
 @app_commands.describe(seite="Seite der Rangliste (Standard: 1)")
 async def top(interaction: discord.Interaction, seite: int = 1):
     data         = load_data()
@@ -205,7 +205,7 @@ async def top(interaction: discord.Interaction, seite: int = 1):
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="xpinfo", description="Erklärt das XP-System und alle Titel")
+@bot.tree.command(name="xpinfo", description="Erklärt das XP-System und alle Titel", guild=MY_GUILD)
 async def xpinfo(interaction: discord.Interaction):
     embed = discord.Embed(
         title="ℹ️ XP-System",
@@ -218,12 +218,6 @@ async def xpinfo(interaction: discord.Interaction):
             "🔵 Level 10–19 → Smalltalker\n"
             "🔴 Level 20–29 → Aggressiv Hängengeblieben\n"
             "💀 Level 30+ → Ultimativer Blindermann Hater\n\n"
-            "**Level-Formel:**\n"
-            "`XP für Level N = 5·N² + 50·N + 100`\n\n"
-            "**Beispiele:**\n"
-            f"Level 5 → {total_xp_for_level(5):,} XP gesamt\n"
-            f"Level 10 → {total_xp_for_level(10):,} XP gesamt\n"
-            f"Level 20 → {total_xp_for_level(20):,} XP gesamt\n\n"
             "**Commands:**\n"
             "`/rang [@mitglied]` – Dein Rang\n"
             "`/top [seite]` – Rangliste\n"
@@ -233,7 +227,4 @@ async def xpinfo(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-# ─────────────────────────────────────────────
-#  START
-# ─────────────────────────────────────────────
 bot.run(BOT_TOKEN)
