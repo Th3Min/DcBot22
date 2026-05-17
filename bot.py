@@ -64,12 +64,13 @@ def get_user(data: dict, user_id: str) -> dict:
 # ─────────────────────────────────────────────
 #  BOT
 # ─────────────────────────────────────────────
-class MyBot(commands.Bot):
+class MyBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
         self.tree.copy_global_to(guild=MY_GUILD)
@@ -104,7 +105,6 @@ async def on_message(message: discord.Message):
     if user["last_xp"]:
         last = datetime.fromisoformat(user["last_xp"])
         if (now - last).total_seconds() < COOLDOWN_S:
-            await bot.process_commands(message)
             return
 
     gained_xp        = random.randint(XP_MIN, XP_MAX)
@@ -130,8 +130,6 @@ async def on_message(message: discord.Message):
         embed.set_thumbnail(url=message.author.display_avatar.url)
         embed.set_footer(text=f"Gesamt-XP: {user['xp']:,}")
         await message.channel.send(embed=embed)
-
-    await bot.process_commands(message)
 
 # ─────────────────────────────────────────────
 #  SLASH COMMANDS

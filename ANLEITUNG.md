@@ -87,11 +87,13 @@ Warten bis es fertig ist ✅
 
 | Command | Was macht er? |
 |---|---|
-| `!rank` | Zeigt dein Level, Titel, XP und Fortschrittsbalken |
-| `!rank @user` | Zeigt den Rang eines anderen Users |
-| `!top` | Zeigt die Top-10 Rangliste |
-| `!top 2` | Seite 2 der Rangliste |
-| `!xpinfo` | Erklärt das XP-System |
+| `/rang` | Zeigt dein Level, Titel, XP und Fortschrittsbalken |
+| `/rang @mitglied` | Zeigt den Rang eines anderen Mitglieds |
+| `/top` | Zeigt die Top-10 Rangliste |
+| `/top 2` | Seite 2 der Rangliste |
+| `/xpinfo` | Erklärt das XP-System |
+
+> 💡 Slash Commands erscheinen automatisch wenn du `/` im Chat tippst!
 
 ---
 
@@ -126,7 +128,8 @@ xp-bot/
 **"ModuleNotFoundError: discord"**
 → `pip install discord.py` nochmal ausführen
 
-**Bot ist online aber reagiert nicht**
+**Bot ist online aber Slash Commands erscheinen nicht**
+→ Warte 1–2 Minuten nach dem ersten Start, Discord synchronisiert die Commands einmalig
 → Prüfe ob "MESSAGE CONTENT INTENT" im Developer Portal an ist
 
 **Bot antwortet doppelt**
