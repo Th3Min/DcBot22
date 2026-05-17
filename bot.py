@@ -64,16 +64,16 @@ def get_user(data: dict, user_id: str) -> dict:
 # ─────────────────────────────────────────────
 #  BOT
 # ─────────────────────────────────────────────
-class MyBot(discord.Client):
+class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
-        super().__init__(intents=intents)
-        self.tree = app_commands.CommandTree(self)
+        super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        pass
+        synced = await self.tree.sync(guild=MY_GUILD)
+        print(f"✅ {len(synced)} Slash Commands synchronisiert!")
 
 bot = MyBot()
 
@@ -82,9 +82,6 @@ bot = MyBot()
 # ─────────────────────────────────────────────
 @bot.event
 async def on_ready():
-    bot.tree.copy_global_to(guild=MY_GUILD)
-    synced = await bot.tree.sync(guild=MY_GUILD)
-    print(f"✅ {len(synced)} Slash Commands synchronisiert!")
     print(f"✅ {bot.user} ist online!")
     await bot.change_presence(
         activity=discord.Activity(
@@ -131,6 +128,8 @@ async def on_message(message: discord.Message):
         embed.set_thumbnail(url=message.author.display_avatar.url)
         embed.set_footer(text=f"Gesamt-XP: {user['xp']:,}")
         await message.channel.send(embed=embed)
+
+    await bot.process_commands(message)
 
 # ─────────────────────────────────────────────
 #  SLASH COMMANDS
