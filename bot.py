@@ -73,9 +73,7 @@ class MyBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        self.tree.copy_global_to(guild=MY_GUILD)
-        synced = await self.tree.sync(guild=MY_GUILD)
-        print(f"✅ {len(synced)} Slash Commands synchronisiert!")
+        pass
 
 bot = MyBot()
 
@@ -84,6 +82,9 @@ bot = MyBot()
 # ─────────────────────────────────────────────
 @bot.event
 async def on_ready():
+    bot.tree.copy_global_to(guild=MY_GUILD)
+    synced = await bot.tree.sync(guild=MY_GUILD)
+    print(f"✅ {len(synced)} Slash Commands synchronisiert!")
     print(f"✅ {bot.user} ist online!")
     await bot.change_presence(
         activity=discord.Activity(
