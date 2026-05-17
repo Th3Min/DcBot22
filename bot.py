@@ -48,8 +48,17 @@ threading.Thread(target=run_server, daemon=True).start()
 # ─────────────────────────────────────────────
 #  DATABASE
 # ─────────────────────────────────────────────
+_conn = None
+
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    global _conn
+    try:
+        if _conn is None or _conn.closed:
+            _conn = psycopg2.connect(DATABASE_URL)
+        _conn.isolation_level
+    except Exception:
+        _conn = psycopg2.connect(DATABASE_URL)
+    return _conn
 
 def init_db():
     with get_conn() as conn:
