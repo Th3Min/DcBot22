@@ -6,6 +6,7 @@ import os
 import math
 import random
 from datetime import datetime
+import sys
 
 # ─────────────────────────────────────────────
 #  CONFIG
@@ -24,6 +25,9 @@ LEVEL_COLORS = [
 
 MY_GUILD = discord.Object(id=GUILD_ID)
 
+# ─────────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────────
 def get_title(level: int) -> str:
     if level < 10:
         return "🟢 Anfänger"
@@ -64,32 +68,25 @@ def get_user(data: dict, user_id: str) -> dict:
 # ─────────────────────────────────────────────
 #  BOT
 # ─────────────────────────────────────────────
-class MyBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True
-        super().__init__(command_prefix="!", intents=intents)
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 
-    async def setup_hook(self):
-        try:
-            self.tree.copy_global_to(guild=MY_GUILD)
-            synced = await self.tree.sync(guild=MY_GUILD)
-            print(f"✅ {len(synced)} Slash Commands synchronisiert!")
-        except Exception as e:
-            print(f"❌ Fehler beim Sync: {e}")
-
-bot = MyBot()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ─────────────────────────────────────────────
 #  EVENTS
 # ─────────────────────────────────────────────
 @bot.event
 async def on_ready():
-    print(f"✅ {bot.user} ist online!")
-    print(f"Guild ID: {GUILD_ID}")
-    print(f"Commands im Tree: {[c.name for c in bot.tree.get_commands()]}")
-    print(f"Guild Commands: {[c.name for c in bot.tree.get_commands(guild=MY_GUILD)]}")
+    print(f"Bot eingeloggt als {bot.user}", flush=True)
+    try:
+        synced = await bot.tree.sync(guild=MY_GUILD)
+        print(f"✅ {len(synced)} Slash Commands synchronisiert!", flush=True)
+        for cmd in synced:
+            print(f"  - /{cmd.name}", flush=True)
+    except Exception as e:
+        print(f"❌ Sync Fehler: {e}", flush=True)
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
@@ -110,6 +107,7 @@ async def on_message(message: discord.Message):
     if user["last_xp"]:
         last = datetime.fromisoformat(user["last_xp"])
         if (now - last).total_seconds() < COOLDOWN_S:
+            await bot.process_commands(message)
             return
 
     gained_xp        = random.randint(XP_MIN, XP_MAX)
