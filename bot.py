@@ -87,6 +87,9 @@ bot = MyBot()
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} ist online!")
+    print(f"Guild ID: {GUILD_ID}")
+    print(f"Commands im Tree: {[c.name for c in bot.tree.get_commands()]}")
+    print(f"Guild Commands: {[c.name for c in bot.tree.get_commands(guild=MY_GUILD)]}")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
