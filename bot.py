@@ -209,7 +209,6 @@ async def on_message(message: discord.Message):
 @bot.tree.command(name="rang", description="Zeigt dein Level, Titel und XP an", guild=MY_GUILD)
 @app_commands.describe(mitglied="Anderes Mitglied anzeigen (optional)")
 async def rang(interaction: discord.Interaction, mitglied: discord.Member = None):
-    await interaction.response.defer(ephemeral=True)
     member = mitglied or interaction.user
     uid    = str(member.id)
     user   = get_user(uid)
@@ -238,13 +237,12 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
         inline=False
     )
     embed.set_footer(text=f"Noch {needed_xp - current_xp:,} XP bis Level {level+1}")
-    await interaction.followup.send(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="top", description="Zeigt die Top-10 Rangliste", guild=MY_GUILD)
 @app_commands.describe(seite="Seite der Rangliste (Standard: 1)")
 async def top(interaction: discord.Interaction, seite: int = 1):
-    await interaction.response.defer(ephemeral=True)
     all_users = get_all_users()
 
     per_page = 10
@@ -253,7 +251,7 @@ async def top(interaction: discord.Interaction, seite: int = 1):
     total_p  = math.ceil(len(all_users) / per_page) or 1
 
     if not page:
-        await interaction.followup.send("Keine Daten auf dieser Seite.")
+        await interaction.response.send_message("Keine Daten auf dieser Seite.", ephemeral=True)
         return
 
     medals = ["🥇", "🥈", "🥉"]
@@ -272,12 +270,11 @@ async def top(interaction: discord.Interaction, seite: int = 1):
         color=0xf1c40f
     )
     embed.set_footer(text=f"Seite {seite}/{total_p}  •  /top <seite>")
-    await interaction.followup.send(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="xpinfo", description="Erklärt das XP-System und alle Titel", guild=MY_GUILD)
 async def xpinfo(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(
         title="ℹ️ XP-System",
         color=0x3498db,
@@ -295,7 +292,7 @@ async def xpinfo(interaction: discord.Interaction):
             "`/xpinfo` – Diese Info"
         )
     )
-    await interaction.followup.send(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 bot.run(BOT_TOKEN)
