@@ -115,35 +115,30 @@ async def on_message(message: discord.Message):
     uid = str(message.author.id)
     now = datetime.utcnow()
 
-    # Nutzer anlegen falls nicht vorhanden
-    user = await db.fetchrow("SELECT * FROM users WHERE user_id = $1", uid)
-    if not user:
-        await db.execute(
-            "INSERT INTO users (user_id, xp, messages, last_xp) VALUES ($1, 0, 0, NULL)",
-            uid
-        )
-        user = {"user_id": uid, "xp": 0, "messages": 0, "last_xp": None}
+    # Atomic UPSERT: Nutzer anlegen oder messages atomar hochzählen
+    # Gibt den aktuellen Stand NACH dem Update zurück
+    user = await db.fetchrow("""
+        INSERT INTO users (user_id, xp, messages, last_xp)
+        VALUES ($1, 0, 1, NULL)
+        ON CONFLICT (user_id) DO UPDATE
+            SET messages = users.messages + 1
+        RETURNING *
+    """, uid)
 
-    new_msgs = user["messages"] + 1  # Nachricht IMMER zählen
-
-    # Cooldown noch aktiv → nur messages hochzählen, kein XP
+    # Cooldown noch aktiv → messages wurde bereits gezählt, fertig
     if user["last_xp"] and (now - user["last_xp"]).total_seconds() < COOLDOWN_S:
-        await db.execute(
-            "UPDATE users SET messages = $1 WHERE user_id = $2",
-            new_msgs, uid
-        )
         await bot.process_commands(message)
         return
 
-    # Cooldown abgelaufen → XP vergeben + messages hochzählen
+    # Cooldown abgelaufen → XP vergeben
     gained_xp = random.randint(XP_MIN, XP_MAX)
     old_level  = get_level(user["xp"])
     new_xp     = user["xp"] + gained_xp
     new_level  = get_level(new_xp)
 
     await db.execute(
-        "UPDATE users SET xp = $1, messages = $2, last_xp = $3 WHERE user_id = $4",
-        new_xp, new_msgs, now, uid
+        "UPDATE users SET xp = $1, last_xp = $2 WHERE user_id = $3",
+        new_xp, now, uid
     )
 
     # Neuer Titel?
