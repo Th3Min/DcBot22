@@ -85,16 +85,26 @@ db: asyncpg.Pool = None
 @bot.event
 async def on_ready():
     global db
-    db = await asyncpg.create_pool(DATABASE_URL)
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY,
-            xp INTEGER DEFAULT 0,
-            messages INTEGER DEFAULT 0,
-            last_xp TIMESTAMP
-        )
-    """)
-    print(f"✅ DB verbunden | COOLDOWN={COOLDOWN_S}s", flush=True)
+    if not DATABASE_URL:
+        print("❌ FEHLER: DATABASE_URL ist nicht gesetzt!", flush=True)
+        await bot.close()
+        return
+    try:
+        db = await asyncpg.create_pool(DATABASE_URL)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                xp INTEGER DEFAULT 0,
+                messages INTEGER DEFAULT 0,
+                last_xp TIMESTAMP
+            )
+        """)
+        count = await db.fetchval("SELECT COUNT(*) FROM users")
+        print(f"✅ DB verbunden – {count} User gespeichert | COOLDOWN={COOLDOWN_S}s", flush=True)
+    except Exception as e:
+        print(f"❌ DB Verbindungsfehler: {e}", flush=True)
+        await bot.close()
+        return
     try:
         synced = await bot.tree.sync(guild=MY_GUILD)
         print(f"✅ {len(synced)} Slash Commands synchronisiert!", flush=True)
@@ -109,7 +119,7 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot or not message.guild:
+    if message.author.bot or not message.guild or db is None:
         return
 
     uid = str(message.author.id)
