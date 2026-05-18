@@ -7,18 +7,17 @@ import random
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import asyncpg
 
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
-BOT_TOKEN  = os.environ.get("BOT_TOKEN", "DEIN_TOKEN_HIER")
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "DEIN_TOKEN_HIER")
 DATABASE_URL = os.environ.get("DATABASE_URL")
-GUILD_ID   = 1504924690156748931
-XP_MIN     = 15
-XP_MAX     = 25
-COOLDOWN_S = 20
+GUILD_ID     = 1504924690156748931
+XP_MIN       = 15
+XP_MAX       = 25
+COOLDOWN_S   = 20
 
 LEVEL_COLORS = [
     0x3498db, 0x2ecc71, 0xe67e22, 0xe74c3c,
@@ -44,59 +43,6 @@ def run_server():
     server.serve_forever()
 
 threading.Thread(target=run_server, daemon=True).start()
-
-# ─────────────────────────────────────────────
-#  DATABASE
-# ─────────────────────────────────────────────
-_conn = None
-
-def get_conn():
-    global _conn
-    try:
-        if _conn is None or _conn.closed:
-            _conn = psycopg2.connect(DATABASE_URL)
-        _conn.isolation_level
-    except Exception:
-        _conn = psycopg2.connect(DATABASE_URL)
-    return _conn
-
-def init_db():
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id TEXT PRIMARY KEY,
-                    xp INTEGER DEFAULT 0,
-                    messages INTEGER DEFAULT 0,
-                    last_xp TIMESTAMP
-                )
-            """)
-        conn.commit()
-
-def get_user(user_id: str) -> dict:
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-            row = cur.fetchone()
-            if not row:
-                cur.execute("INSERT INTO users (user_id, xp, messages, last_xp) VALUES (%s, 0, 0, NULL)", (user_id,))
-                conn.commit()
-                return {"user_id": user_id, "xp": 0, "messages": 0, "last_xp": None}
-            return dict(row)
-
-def update_user(user_id: str, xp: int, messages: int, last_xp):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE users SET xp = %s, messages = %s, last_xp = %s WHERE user_id = %s
-            """, (xp, messages, last_xp, user_id))
-        conn.commit()
-
-def get_all_users():
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users ORDER BY xp DESC")
-            return [dict(r) for r in cur.fetchall()]
 
 # ─────────────────────────────────────────────
 #  HELPERS
@@ -131,14 +77,24 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+db: asyncpg.Pool = None
 
 # ─────────────────────────────────────────────
 #  EVENTS
 # ─────────────────────────────────────────────
 @bot.event
 async def on_ready():
-    init_db()
-    print(f"Bot eingeloggt als {bot.user}", flush=True)
+    global db
+    db = await asyncpg.create_pool(DATABASE_URL)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            xp INTEGER DEFAULT 0,
+            messages INTEGER DEFAULT 0,
+            last_xp TIMESTAMP
+        )
+    """)
+    print(f"✅ DB verbunden | COOLDOWN={COOLDOWN_S}s", flush=True)
     try:
         synced = await bot.tree.sync(guild=MY_GUILD)
         print(f"✅ {len(synced)} Slash Commands synchronisiert!", flush=True)
@@ -156,25 +112,21 @@ async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
 
-    uid  = str(message.author.id)
-    user = get_user(uid)
-    now  = datetime.utcnow()
+    uid = str(message.author.id)
+    now = datetime.utcnow()
+
+    user = await db.fetchrow("SELECT * FROM users WHERE user_id = $1", uid)
+    if not user:
+        await db.execute(
+            "INSERT INTO users (user_id, xp, messages, last_xp) VALUES ($1, 0, 0, NULL)",
+            uid
+        )
+        user = {"user_id": uid, "xp": 0, "messages": 0, "last_xp": None}
 
     new_msgs = user["messages"] + 1
-    on_cooldown = False
 
-    if user["last_xp"]:
-        last = user["last_xp"]
-        if isinstance(last, str):
-            last = datetime.fromisoformat(last)
-        if (now - last).total_seconds() < COOLDOWN_S:
-            on_cooldown = True
-
-    if on_cooldown:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("UPDATE users SET messages = %s WHERE user_id = %s", (new_msgs, uid))
-            conn.commit()
+    if user["last_xp"] and (now - user["last_xp"]).total_seconds() < COOLDOWN_S:
+        await db.execute("UPDATE users SET messages = $1 WHERE user_id = $2", new_msgs, uid)
         await bot.process_commands(message)
         return
 
@@ -183,16 +135,18 @@ async def on_message(message: discord.Message):
     new_xp     = user["xp"] + gained_xp
     new_level  = get_level(new_xp)
 
-    update_user(uid, new_xp, new_msgs, now)
+    await db.execute(
+        "UPDATE users SET xp = $1, messages = $2, last_xp = $3 WHERE user_id = $4",
+        new_xp, new_msgs, now, uid
+    )
 
     if new_level > old_level and get_title(new_level) != get_title(old_level):
         color = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
-        title = get_title(new_level)
         embed = discord.Embed(
             title="🎖️ NEUER TITEL!",
             description=(
                 f"**{message.author.display_name}** hat einen neuen Titel erreicht! 🎉\n\n"
-                f"**{title}**\n\n"
+                f"**{get_title(new_level)}**\n\n"
                 f"_(Level {new_level} erreicht)_"
             ),
             color=color
@@ -211,7 +165,10 @@ async def on_message(message: discord.Message):
 async def rang(interaction: discord.Interaction, mitglied: discord.Member = None):
     member = mitglied or interaction.user
     uid    = str(member.id)
-    user   = get_user(uid)
+
+    user = await db.fetchrow("SELECT * FROM users WHERE user_id = $1", uid)
+    if not user:
+        user = {"xp": 0, "messages": 0}
 
     level      = get_level(user["xp"])
     current_xp = user["xp"] - total_xp_for_level(level)
@@ -221,16 +178,16 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
     filled     = int(bar_len * progress)
     bar        = "█" * filled + "░" * (bar_len - filled)
 
-    all_users = get_all_users()
+    all_users = await db.fetch("SELECT user_id FROM users ORDER BY xp DESC")
     rank_pos  = next((i + 1 for i, u in enumerate(all_users) if u["user_id"] == uid), "?")
 
     color = LEVEL_COLORS[level % len(LEVEL_COLORS)]
     embed = discord.Embed(color=color)
     embed.set_author(name=f"{member.display_name} – Rang #{rank_pos}", icon_url=member.display_avatar.url)
-    embed.add_field(name="🏆 Level",       value=f"**{level}**",             inline=True)
-    embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**",  inline=True)
-    embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",      inline=True)
-    embed.add_field(name="💬 Nachrichten", value=f"**{user['messages']:,}**", inline=True)
+    embed.add_field(name="🏆 Level",       value=f"**{level}**",            inline=True)
+    embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**", inline=True)
+    embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",     inline=True)
+    embed.add_field(name="💬 Nachrichten", value=f"**{user['messages']:,}**",inline=True)
     embed.add_field(
         name=f"Fortschritt  {current_xp:,} / {needed_xp:,} XP",
         value=f"`{bar}` {progress*100:.1f}%",
@@ -243,7 +200,7 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
 @bot.tree.command(name="top", description="Zeigt die Top-10 Rangliste", guild=MY_GUILD)
 @app_commands.describe(seite="Seite der Rangliste (Standard: 1)")
 async def top(interaction: discord.Interaction, seite: int = 1):
-    all_users = get_all_users()
+    all_users = await db.fetch("SELECT * FROM users ORDER BY xp DESC")
 
     per_page = 10
     start    = (seite - 1) * per_page
