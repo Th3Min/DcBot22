@@ -115,6 +115,7 @@ async def on_message(message: discord.Message):
     uid = str(message.author.id)
     now = datetime.utcnow()
 
+    # Nutzer anlegen falls nicht vorhanden
     user = await db.fetchrow("SELECT * FROM users WHERE user_id = $1", uid)
     if not user:
         await db.execute(
@@ -123,13 +124,18 @@ async def on_message(message: discord.Message):
         )
         user = {"user_id": uid, "xp": 0, "messages": 0, "last_xp": None}
 
-    new_msgs = user["messages"] + 1
+    new_msgs = user["messages"] + 1  # Nachricht IMMER zählen
 
+    # Cooldown noch aktiv → nur messages hochzählen, kein XP
     if user["last_xp"] and (now - user["last_xp"]).total_seconds() < COOLDOWN_S:
-        await db.execute("UPDATE users SET messages = $1 WHERE user_id = $2", new_msgs, uid)
+        await db.execute(
+            "UPDATE users SET messages = $1 WHERE user_id = $2",
+            new_msgs, uid
+        )
         await bot.process_commands(message)
         return
 
+    # Cooldown abgelaufen → XP vergeben + messages hochzählen
     gained_xp = random.randint(XP_MIN, XP_MAX)
     old_level  = get_level(user["xp"])
     new_xp     = user["xp"] + gained_xp
@@ -140,6 +146,7 @@ async def on_message(message: discord.Message):
         new_xp, new_msgs, now, uid
     )
 
+    # Neuer Titel?
     if new_level > old_level and get_title(new_level) != get_title(old_level):
         color = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
         embed = discord.Embed(
