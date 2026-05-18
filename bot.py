@@ -34,7 +34,6 @@ class KeepAlive(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is running!")
-
     def log_message(self, format, *args):
         pass
 
@@ -90,15 +89,14 @@ async def on_ready():
         print("❌ FEHLER: DATABASE_URL ist nicht gesetzt!", flush=True)
         await bot.close()
         return
-
     try:
         db = await asyncpg.create_pool(DATABASE_URL)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id  TEXT      PRIMARY KEY,
-                xp       INTEGER   DEFAULT 0,
-                messages INTEGER   DEFAULT 0,
-                last_xp  TIMESTAMP
+                user_id TEXT PRIMARY KEY,
+                xp INTEGER DEFAULT 0,
+                messages INTEGER DEFAULT 0,
+                last_xp TIMESTAMP
             )
         """)
         count = await db.fetchval("SELECT COUNT(*) FROM users")
@@ -107,20 +105,17 @@ async def on_ready():
         print(f"❌ DB Verbindungsfehler: {e}", flush=True)
         await bot.close()
         return
-
     try:
         synced = await bot.tree.sync(guild=MY_GUILD)
         print(f"✅ {len(synced)} Slash Commands synchronisiert!", flush=True)
     except Exception as e:
         print(f"❌ Sync Fehler: {e}", flush=True)
-
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
             name="/top | XP Bot"
         )
     )
-
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -130,52 +125,47 @@ async def on_message(message: discord.Message):
     uid = str(message.author.id)
     now = datetime.utcnow()
 
-    # ── Schritt 1: Nutzer sicherstellen + messages IMMER +1 ──────────────────
-    # Wir holen den Stand VOR dem messages-Increment (RETURNING gibt neuen Stand).
-    # Wichtig: xp und last_xp werden hier NICHT verändert, nur messages.
+    # Atomic UPSERT: Nutzer anlegen oder messages atomar hochzählen
+    # Gibt den aktuellen Stand NACH dem Update zurück
     user = await db.fetchrow("""
         INSERT INTO users (user_id, xp, messages, last_xp)
         VALUES ($1, 0, 1, NULL)
-        ON CONFLICT (user_id) DO UPDATE
-            SET messages = users.messages + 1
-        RETURNING xp, messages, last_xp
+        RETURNING *
     """, uid)
 
-    # ── Schritt 2: XP-Cooldown prüfen ────────────────────────────────────────
-    # last_xp ist NULL (neuer User) oder Cooldown abgelaufen → XP vergeben
-    cooldown_active = (
-        user["last_xp"] is not None
-        and (now - user["last_xp"]).total_seconds() < COOLDOWN_S
+    await db.execute("UPDATE users SET messages = messages + 1 WHERE user_id = $1", uid)
+
+    # Cooldown noch aktiv → messages wurde bereits gezählt, fertig
+    if user["last_xp"] and (now - user["last_xp"]).total_seconds() < COOLDOWN_S:
+        await bot.process_commands(message)
+        return
+
+    # Cooldown abgelaufen → XP vergeben
+    gained_xp = random.randint(XP_MIN, XP_MAX)
+    old_level  = get_level(user["xp"])
+    new_xp     = user["xp"] + gained_xp
+    new_level  = get_level(new_xp)
+
+    await db.execute(
+        "UPDATE users SET xp = $1, last_xp = $2 WHERE user_id = $3",
+        new_xp, now, uid
     )
 
-    if not cooldown_active:
-        gained_xp = random.randint(XP_MIN, XP_MAX)
-        old_xp    = user["xp"]
-        new_xp    = old_xp + gained_xp
-        old_level = get_level(old_xp)
-        new_level = get_level(new_xp)
-
-        # XP und last_xp atomar updaten
-        await db.execute(
-            "UPDATE users SET xp = $1, last_xp = $2 WHERE user_id = $3",
-            new_xp, now, uid
+    # Neuer Titel?
+    if new_level > old_level and get_title(new_level) != get_title(old_level):
+        color = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
+        embed = discord.Embed(
+            title="🎖️ NEUER TITEL!",
+            description=(
+                f"**{message.author.display_name}** hat einen neuen Titel erreicht! 🎉\n\n"
+                f"**{get_title(new_level)}**\n\n"
+                f"_(Level {new_level} erreicht)_"
+            ),
+            color=color
         )
-
-        # Neuen Titel ankündigen
-        if new_level > old_level and get_title(new_level) != get_title(old_level):
-            color = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
-            embed = discord.Embed(
-                title="🎖️ NEUER TITEL!",
-                description=(
-                    f"**{message.author.display_name}** hat einen neuen Titel erreicht! 🎉\n\n"
-                    f"**{get_title(new_level)}**\n\n"
-                    f"_(Level {new_level} erreicht)_"
-                ),
-                color=color
-            )
-            embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.set_footer(text=f"Gesamt-XP: {new_xp:,}")
-            await message.channel.send(embed=embed)
+        embed.set_thumbnail(url=message.author.display_avatar.url)
+        embed.set_footer(text=f"Gesamt-XP: {new_xp:,}")
+        await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
 
@@ -206,21 +196,18 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
 
     color = LEVEL_COLORS[level % len(LEVEL_COLORS)]
     embed = discord.Embed(color=color)
-    embed.set_author(
-        name=f"{member.display_name} – Rang #{rank_pos}",
-        icon_url=member.display_avatar.url
-    )
-    embed.add_field(name="🏆 Level",       value=f"**{level}**",             inline=True)
-    embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**",  inline=True)
-    embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",      inline=True)
-    embed.add_field(name="💬 Nachrichten", value=f"**{user['messages']:,}**", inline=True)
+    embed.set_author(name=f"{member.display_name} – Rang #{rank_pos}", icon_url=member.display_avatar.url)
+    embed.add_field(name="🏆 Level",       value=f"**{level}**",            inline=True)
+    embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**", inline=True)
+    embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",     inline=True)
+    embed.add_field(name="💬 Nachrichten", value=f"**{user['messages']:,}**",inline=True)
     embed.add_field(
         name=f"Fortschritt  {current_xp:,} / {needed_xp:,} XP",
-        value=f"`{bar}` {progress * 100:.1f}%",
+        value=f"`{bar}` {progress*100:.1f}%",
         inline=False
     )
-    embed.set_footer(text=f"Noch {needed_xp - current_xp:,} XP bis Level {level + 1}")
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    embed.set_footer(text=f"Noch {needed_xp - current_xp:,} XP bis Level {level+1}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="top", description="Zeigt die Top-10 Rangliste", guild=MY_GUILD)
@@ -246,9 +233,7 @@ async def top(interaction: discord.Interaction, seite: int = 1):
         member = interaction.guild.get_member(int(udata["user_id"]))
         name   = member.display_name if member else f"User {udata['user_id'][:6]}"
         level  = get_level(udata["xp"])
-        lines.append(
-            f"{icon} **{name}** — {get_title(level)} · Lvl {level} · {udata['xp']:,} XP"
-        )
+        lines.append(f"{icon} **{name}** — {get_title(level)} · Lvl {level} · {udata['xp']:,} XP")
 
     embed = discord.Embed(
         title="🏆 XP Rangliste",
@@ -256,12 +241,11 @@ async def top(interaction: discord.Interaction, seite: int = 1):
         color=0xf1c40f
     )
     embed.set_footer(text=f"Seite {seite}/{total_p}  •  /top <seite>")
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="xpinfo", description="Erklärt das XP-System und alle Titel", guild=MY_GUILD)
 async def xpinfo(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(
         title="ℹ️ XP-System",
         color=0x3498db,
@@ -279,7 +263,7 @@ async def xpinfo(interaction: discord.Interaction):
             "`/xpinfo` – Diese Info"
         )
     )
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 bot.run(BOT_TOKEN)
