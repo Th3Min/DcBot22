@@ -123,7 +123,9 @@ Im **"Deployments"** Tab siehst du den Log – wenn dort steht:
 | 1–9    | 🟢 Anfänger                    |
 | 10–19  | 🔵 Smalltalker                 |
 | 20–29  | 🔴 Aggressiv Hängengeblieben   |
-| 30+    | 💀 Ultimativer Blindermann Hater |
+| 30–39  | 💵 Bürgergeld Empfänger        |
+| 40–49  | 💉 Discord Junkie              |
+| 50+    | 💀 Ultimativer Blindermann Hater |
 
 Bei einem neuen Titel sendet der Bot automatisch eine Nachricht im Channel. 🎖️
 
