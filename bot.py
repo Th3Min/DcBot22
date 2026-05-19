@@ -8,6 +8,12 @@ from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import asyncpg
+#    ___________.__    ________     _____  .__        
+#    \__    ___/|  |__ \_____  \   /     \ |__| ____  
+#      |    |   |  |  \  _(__  <  /  \ /  \|  |/    \ 
+#      |    |   |   Y  \/       \/    Y    \  |   |  \
+#      |____|   |___|  /______  /\____|__  /__|___|  /
+#                    \/       \/         \/        \/ 
 
 # ─────────────────────────────────────────────
 #  CONFIG
@@ -74,6 +80,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 db: asyncpg.Pool = None
+voice_join_times: dict = {}  # user_id -> datetime beim Voice-Join
 
 # ─────────────────────────────────────────────
 #  ON READY
@@ -90,11 +97,16 @@ async def on_ready():
         db = await asyncpg.create_pool(DATABASE_URL)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id  TEXT      PRIMARY KEY,
-                xp       INTEGER   DEFAULT 0,
-                messages INTEGER   DEFAULT 0,
-                last_xp  TIMESTAMP
+                user_id       TEXT      PRIMARY KEY,
+                xp            INTEGER   DEFAULT 0,
+                messages      INTEGER   DEFAULT 0,
+                last_xp       TIMESTAMP,
+                voice_minutes INTEGER   DEFAULT 0
             )
+        """)
+        # Spalte nachrüsten falls DB schon existiert (ohne voice_minutes)
+        await db.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS voice_minutes INTEGER DEFAULT 0
         """)
         count = await db.fetchval("SELECT COUNT(*) FROM users")
         print(f"✅ DB verbunden – {count} User | XP-Cooldown={COOLDOWN_S}s", flush=True)
@@ -199,6 +211,35 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
 
+
+# ─────────────────────────────────────────────
+#  ON VOICE STATE UPDATE
+#  Trackt wie lange jemand im Voice war
+# ─────────────────────────────────────────────
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if member.bot or db is None:
+        return
+
+    uid = str(member.id)
+    now = datetime.utcnow()
+
+    # Jemand joint einen Voice Channel (vorher keiner, jetzt einer)
+    if before.channel is None and after.channel is not None:
+        voice_join_times[uid] = now
+
+    # Jemand verlässt einen Voice Channel (vorher einer, jetzt keiner)
+    elif before.channel is not None and after.channel is None:
+        if uid in voice_join_times:
+            minutes = int((now - voice_join_times.pop(uid)).total_seconds() / 60)
+            if minutes > 0:
+                await db.execute("""
+                    INSERT INTO users (user_id, xp, messages, last_xp, voice_minutes)
+                    VALUES ($1, 0, 0, NULL, $2)
+                    ON CONFLICT (user_id) DO UPDATE
+                        SET voice_minutes = users.voice_minutes + $2
+                """, uid, minutes)
+
 # ─────────────────────────────────────────────
 #  SLASH COMMAND: /rang
 # ─────────────────────────────────────────────
@@ -232,7 +273,12 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
     embed.add_field(name="🏆 Level",       value=f"**{level}**",             inline=True)
     embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**",  inline=True)
     embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",      inline=True)
+    voice_min = user["voice_minutes"] if user.get("voice_minutes") is not None else 0
+    stunden   = voice_min // 60
+    minuten   = voice_min % 60
+    voice_str = f"{stunden}h {minuten}m" if stunden > 0 else f"{minuten}m"
     embed.add_field(name="💬 Nachrichten", value=f"**{user['messages']:,}**", inline=True)
+    embed.add_field(name="🎙️ Voice-Zeit",  value=f"**{voice_str}**",          inline=True)
     embed.add_field(
         name=f"Fortschritt  {current_xp:,} / {needed_xp:,} XP",
         value=f"`{bar}` {progress * 100:.1f}%",
@@ -298,7 +344,9 @@ async def xpinfo(interaction: discord.Interaction):
             "**Commands:**\n"
             "`/rang [@mitglied]` – Dein Rang\n"
             "`/top [seite]` – Rangliste\n"
-            "`/xpinfo` – Diese Info"
+            "`/xpinfo` – Diese Info\n\n"
+            "**Voice-Tracking:**\n"
+            "Zeit im Voice Channel wird in `/rang` angezeigt (kein XP)"
         )
     )
     await interaction.followup.send(embed=embed, ephemeral=True)
