@@ -57,7 +57,9 @@ def get_title(level: int) -> str:
     if level < 10:  return "🟢 Anfänger"
     if level < 20:  return "🔵 Smalltalker"
     if level < 30:  return "🔴 Aggressiv Hängengeblieben"
-    return "💀 Ultimativer Blindermann Hater"
+    if level < 40:  return "💵 Bürgergeld Empfänger"
+    if level < 50:  return "💉 Discord Junkie"
+    if level >= 50:  return "💀 Ultimativer Blindermann Hater"
 
 def xp_for_level(level: int) -> int:
     return 5 * (level ** 2) + 50 * level + 100
@@ -340,7 +342,9 @@ async def xpinfo(interaction: discord.Interaction):
             "🟢 Level 1–9 → Anfänger\n"
             "🔵 Level 10–19 → Smalltalker\n"
             "🔴 Level 20–29 → Aggressiv Hängengeblieben\n"
-            "💀 Level 30+ → Ultimativer Blindermann Hater\n\n"
+            "🔴 Level 30–39 → 💵 Bürgergeld Empfänger\n"
+            "🔴 Level 40–49 → 💉 Discord Junkie\n"
+            "💀 Level 50+ → Ultimativer Blindermann Hater\n\n"
             "**Commands:**\n"
             "`/rang [@mitglied]` – Dein Rang\n"
             "`/top [seite]` – Rangliste\n"
