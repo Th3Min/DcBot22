@@ -344,6 +344,8 @@ async def xpinfo(interaction: discord.Interaction):
             "**Commands:**\n"
             "`/rang [@mitglied]` – Dein Rang\n"
             "`/top [seite]` – Rangliste\n"
+            "`/voicetop [seite]` – Voice-Zeit Rangliste\n"
+            "`/msgtop [seite]` – Nachrichten Rangliste\n"
             "`/xpinfo` – Diese Info\n\n"
             "**Voice-Tracking:**\n"
             "Zeit im Voice Channel wird in `/rang` angezeigt (kein XP)"
@@ -351,5 +353,80 @@ async def xpinfo(interaction: discord.Interaction):
     )
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+
+
+# ─────────────────────────────────────────────
+#  SLASH COMMAND: /voicetop
+# ─────────────────────────────────────────────
+@bot.tree.command(name="voicetop", description="Top-10 nach Voice-Zeit", guild=MY_GUILD)
+@app_commands.describe(seite="Seite der Rangliste (Standard: 1)")
+async def voicetop(interaction: discord.Interaction, seite: int = 1):
+    await interaction.response.defer(ephemeral=True)
+    all_users = await db.fetch("SELECT * FROM users ORDER BY voice_minutes DESC")
+
+    per_page = 10
+    start    = (seite - 1) * per_page
+    page     = all_users[start:start + per_page]
+    total_p  = math.ceil(len(all_users) / per_page) or 1
+
+    if not page:
+        await interaction.followup.send("Keine Daten auf dieser Seite.", ephemeral=True)
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines  = []
+    for i, udata in enumerate(page):
+        pos    = start + i + 1
+        icon   = medals[pos - 1] if pos <= 3 else f"`#{pos}`"
+        member = interaction.guild.get_member(int(udata["user_id"]))
+        name   = member.display_name if member else f"User {udata['user_id'][:6]}"
+        vm     = udata["voice_minutes"] or 0
+        h, m   = vm // 60, vm % 60
+        zeit   = f"{h}h {m}m" if h > 0 else f"{m}m"
+        lines.append(f"{icon} **{name}** — 🎙️ {zeit}")
+
+    embed = discord.Embed(
+        title="🎙️ Voice-Zeit Rangliste",
+        description="\n".join(lines),
+        color=0x9b59b6
+    )
+    embed.set_footer(text=f"Seite {seite}/{total_p}  •  /voicetop <seite>")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+#  SLASH COMMAND: /msgtop
+# ─────────────────────────────────────────────
+@bot.tree.command(name="msgtop", description="Top-10 nach Nachrichten", guild=MY_GUILD)
+@app_commands.describe(seite="Seite der Rangliste (Standard: 1)")
+async def msgtop(interaction: discord.Interaction, seite: int = 1):
+    await interaction.response.defer(ephemeral=True)
+    all_users = await db.fetch("SELECT * FROM users ORDER BY messages DESC")
+
+    per_page = 10
+    start    = (seite - 1) * per_page
+    page     = all_users[start:start + per_page]
+    total_p  = math.ceil(len(all_users) / per_page) or 1
+
+    if not page:
+        await interaction.followup.send("Keine Daten auf dieser Seite.", ephemeral=True)
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines  = []
+    for i, udata in enumerate(page):
+        pos    = start + i + 1
+        icon   = medals[pos - 1] if pos <= 3 else f"`#{pos}`"
+        member = interaction.guild.get_member(int(udata["user_id"]))
+        name   = member.display_name if member else f"User {udata['user_id'][:6]}"
+        lines.append(f"{icon} **{name}** — 💬 {udata['messages']:,} Nachrichten")
+
+    embed = discord.Embed(
+        title="💬 Nachrichten Rangliste",
+        description="\n".join(lines),
+        color=0x2ecc71
+    )
+    embed.set_footer(text=f"Seite {seite}/{total_p}  •  /msgtop <seite>")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 bot.run(BOT_TOKEN)
