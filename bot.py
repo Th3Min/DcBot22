@@ -17,7 +17,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 GUILD_ID     = 1504924690156748931
 XP_MIN       = 15
 XP_MAX       = 25
-COOLDOWN_S   = 20
+COOLDOWN_S   = 20   # Sekunden zwischen XP-Vergaben
 
 LEVEL_COLORS = [
     0x3498db, 0x2ecc71, 0xe67e22, 0xe74c3c,
@@ -27,14 +27,14 @@ LEVEL_COLORS = [
 MY_GUILD = discord.Object(id=GUILD_ID)
 
 # ─────────────────────────────────────────────
-#  KEEP ALIVE
+#  KEEP ALIVE  (Railway braucht das nicht,
+#  schadet aber auch nicht)
 # ─────────────────────────────────────────────
 class KeepAlive(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is running!")
-
     def log_message(self, format, *args):
         pass
 
@@ -45,12 +45,12 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # ─────────────────────────────────────────────
-#  HELPERS
+#  LEVEL / TITEL HELPERS
 # ─────────────────────────────────────────────
 def get_title(level: int) -> str:
-    if level < 10:   return "🟢 Anfänger"
-    if level < 20:   return "🔵 Smalltalker"
-    if level < 30:   return "🔴 Aggressiv Hängengeblieben"
+    if level < 10:  return "🟢 Anfänger"
+    if level < 20:  return "🔵 Smalltalker"
+    if level < 30:  return "🔴 Aggressiv Hängengeblieben"
     return "💀 Ultimativer Blindermann Hater"
 
 def xp_for_level(level: int) -> int:
@@ -85,6 +85,7 @@ async def on_ready():
         print("❌ FEHLER: DATABASE_URL ist nicht gesetzt!", flush=True)
         await bot.close()
         return
+
     try:
         db = await asyncpg.create_pool(DATABASE_URL)
         await db.execute("""
@@ -96,22 +97,27 @@ async def on_ready():
             )
         """)
         count = await db.fetchval("SELECT COUNT(*) FROM users")
-        print(f"✅ DB verbunden – {count} User | COOLDOWN={COOLDOWN_S}s", flush=True)
+        print(f"✅ DB verbunden – {count} User | XP-Cooldown={COOLDOWN_S}s", flush=True)
     except Exception as e:
         print(f"❌ DB Fehler: {e}", flush=True)
         await bot.close()
         return
+
     try:
         synced = await bot.tree.sync(guild=MY_GUILD)
         print(f"✅ {len(synced)} Slash Commands synchronisiert!", flush=True)
     except Exception as e:
         print(f"❌ Sync Fehler: {e}", flush=True)
+
     await bot.change_presence(
         activity=discord.Activity(type=discord.ActivityType.watching, name="/top | XP Bot")
     )
+    print(f"✅ Bot bereit als {bot.user}", flush=True)
 
 # ─────────────────────────────────────────────
-#  ON MESSAGE  –  Nachrichten & XP getrennt
+#  ON MESSAGE
+#  Nachrichten:  IMMER zählen (kein Cooldown)
+#  XP:           nur alle COOLDOWN_S Sekunden
 # ─────────────────────────────────────────────
 @bot.event
 async def on_message(message: discord.Message):
@@ -121,28 +127,28 @@ async def on_message(message: discord.Message):
     uid = str(message.author.id)
     now = datetime.utcnow()
 
-    # ── SCHRITT 1: Nutzer anlegen falls neu ──────────────────────────────────
+    # 1️⃣  Nutzer anlegen falls noch nicht vorhanden
     await db.execute("""
         INSERT INTO users (user_id, xp, messages, last_xp)
         VALUES ($1, 0, 0, NULL)
         ON CONFLICT (user_id) DO NOTHING
     """, uid)
 
-    # ── SCHRITT 2: Nachrichten IMMER zählen – kein Cooldown hier ─────────────
+    # 2️⃣  Nachricht IMMER zählen – komplett unabhängig vom XP-Cooldown
     await db.execute(
         "UPDATE users SET messages = messages + 1 WHERE user_id = $1",
         uid
     )
 
-    # ── SCHRITT 3: XP nur vergeben wenn Cooldown abgelaufen ──────────────────
+    # 3️⃣  XP-Cooldown prüfen
     last_xp = await db.fetchval("SELECT last_xp FROM users WHERE user_id = $1", uid)
-
     cooldown_aktiv = (
         last_xp is not None
         and (now - last_xp).total_seconds() < COOLDOWN_S
     )
 
     if not cooldown_aktiv:
+        # 4️⃣  XP vergeben
         old_xp    = await db.fetchval("SELECT xp FROM users WHERE user_id = $1", uid)
         gained_xp = random.randint(XP_MIN, XP_MAX)
         new_xp    = old_xp + gained_xp
@@ -154,32 +160,47 @@ async def on_message(message: discord.Message):
             new_xp, now, uid
         )
 
-        # Neuen Titel ankündigen
-        if new_level > old_level and get_title(new_level) != get_title(old_level):
+        # 5️⃣  Level-Up Nachricht
+        if new_level > old_level:
             color = LEVEL_COLORS[new_level % len(LEVEL_COLORS)]
-            embed = discord.Embed(
-                title="🎖️ NEUER TITEL!",
-                description=(
-                    f"**{message.author.display_name}** hat einen neuen Titel erreicht! 🎉\n\n"
-                    f"**{get_title(new_level)}**\n\n"
-                    f"_(Level {new_level} erreicht)_"
-                ),
-                color=color
-            )
-            embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.set_footer(text=f"Gesamt-XP: {new_xp:,}")
-            await message.channel.send(embed=embed)
+            titel_gewechselt = get_title(new_level) != get_title(old_level)
+
+            if titel_gewechselt:
+                # Neuer Titel → großes Embed
+                embed = discord.Embed(
+                    title="🎖️ NEUER TITEL!",
+                    description=(
+                        f"**{message.author.display_name}** hat einen neuen Titel erreicht! 🎉\n\n"
+                        f"**{get_title(new_level)}**\n\n"
+                        f"_(Level {new_level} erreicht)_"
+                    ),
+                    color=color
+                )
+                embed.set_thumbnail(url=message.author.display_avatar.url)
+                embed.set_footer(text=f"Gesamt-XP: {new_xp:,}")
+                await message.channel.send(embed=embed)
+            else:
+                # Level-Up ohne neuen Titel → kleine Nachricht
+                embed = discord.Embed(
+                    description=(
+                        f"⬆️ **{message.author.display_name}** ist jetzt **Level {new_level}**! "
+                        f"({get_title(new_level)})"
+                    ),
+                    color=color
+                )
+                await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
 
-# Slash-Commands die mit ! aufgerufen werden ignorieren
+
+# Text-Commands die mit ! getippt werden einfach ignorieren
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
 
 # ─────────────────────────────────────────────
-#  SLASH COMMANDS
+#  SLASH COMMAND: /rang
 # ─────────────────────────────────────────────
 @bot.tree.command(name="rang", description="Zeigt dein Level, Titel und XP an", guild=MY_GUILD)
 @app_commands.describe(mitglied="Anderes Mitglied anzeigen (optional)")
@@ -204,7 +225,10 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
 
     color = LEVEL_COLORS[level % len(LEVEL_COLORS)]
     embed = discord.Embed(color=color)
-    embed.set_author(name=f"{member.display_name} – Rang #{rank_pos}", icon_url=member.display_avatar.url)
+    embed.set_author(
+        name=f"{member.display_name} – Rang #{rank_pos}",
+        icon_url=member.display_avatar.url
+    )
     embed.add_field(name="🏆 Level",       value=f"**{level}**",             inline=True)
     embed.add_field(name="🎖️ Titel",       value=f"**{get_title(level)}**",  inline=True)
     embed.add_field(name="⚡ Gesamt-XP",   value=f"**{user['xp']:,}**",      inline=True)
@@ -217,7 +241,9 @@ async def rang(interaction: discord.Interaction, mitglied: discord.Member = None
     embed.set_footer(text=f"Noch {needed_xp - current_xp:,} XP bis Level {level + 1}")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-
+# ─────────────────────────────────────────────
+#  SLASH COMMAND: /top
+# ─────────────────────────────────────────────
 @bot.tree.command(name="top", description="Zeigt die Top-10 Rangliste", guild=MY_GUILD)
 @app_commands.describe(seite="Seite der Rangliste (Standard: 1)")
 async def top(interaction: discord.Interaction, seite: int = 1):
@@ -243,11 +269,17 @@ async def top(interaction: discord.Interaction, seite: int = 1):
         level  = get_level(udata["xp"])
         lines.append(f"{icon} **{name}** — {get_title(level)} · Lvl {level} · {udata['xp']:,} XP")
 
-    embed = discord.Embed(title="🏆 XP Rangliste", description="\n".join(lines), color=0xf1c40f)
+    embed = discord.Embed(
+        title="🏆 XP Rangliste",
+        description="\n".join(lines),
+        color=0xf1c40f
+    )
     embed.set_footer(text=f"Seite {seite}/{total_p}  •  /top <seite>")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-
+# ─────────────────────────────────────────────
+#  SLASH COMMAND: /xpinfo
+# ─────────────────────────────────────────────
 @bot.tree.command(name="xpinfo", description="Erklärt das XP-System und alle Titel", guild=MY_GUILD)
 async def xpinfo(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -256,7 +288,8 @@ async def xpinfo(interaction: discord.Interaction):
         color=0x3498db,
         description=(
             f"**XP pro Nachricht:** {XP_MIN}–{XP_MAX} (zufällig)\n"
-            f"**Cooldown:** {COOLDOWN_S} Sekunden\n\n"
+            f"**XP-Cooldown:** {COOLDOWN_S} Sekunden\n"
+            f"**Nachrichten:** werden immer gezählt (kein Cooldown)\n\n"
             "**Titel:**\n"
             "🟢 Level 1–9 → Anfänger\n"
             "🔵 Level 10–19 → Smalltalker\n"
